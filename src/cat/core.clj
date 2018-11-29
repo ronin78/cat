@@ -11,32 +11,6 @@
 (def car-treasure 10)
 (def num-spaces 100)
 (def max-move 4)
-
-;; World functions
-(defn move-edges
-  []
-   (apply uber/graph (mapcat #(map vec (partition 2 1 %)) spaces)) 
-  )
-(defn random-space
-  []
-  (rand-nth (flatten spaces))
-  )
-(defn random-dir
-  []
-  (rand-nth [:up :down :left :right])
-  )
-(defn rand-open
-  []
-  (if (= (rand-int 2) 1)
-    true
-    false
-    )
-  )
-
-;; World objects
-(defrecord Game-state [phone-list exit-list treasure-list character-list neighbor-list move-edges combat? turn])
-(defrecord Phone [loc able?])
-(defrecord Exit [loc open?])
 (defn space-vec
   [prefix num-spaces]
   (vec (map #(str prefix %) (range 1 (+ num-spaces 1))))
@@ -66,7 +40,45 @@
              ["H16" "K6"]
              ["H19" "O1"]
              ["H19" "L1"]
+             ["H13" "SF1"]
+             ["H13" "SF2"]
              ])
+
+;; Helper functions
+(defn print-2n
+  [s]
+  (print (str s "\n\n"))
+  )
+(defn print-pr
+  [s]
+  (println (str s "> "))
+  )
+
+;; World functions
+(defn move-edges
+  []
+   (apply uber/graph (mapcat #(map vec (partition 2 1 %)) spaces)) 
+  )
+(defn random-space
+  []
+  (rand-nth (flatten spaces))
+  )
+(defn random-dir
+  []
+  (rand-nth [:up :down :left :right])
+  )
+(defn rand-open
+  []
+  (if (= (rand-int 2) 1)
+    true
+    false
+    )
+  )
+
+;; World objects
+(defrecord Game-state [phone-list exit-list treasure-list character-list neighbor-list move-edges combat? turn])
+(defrecord Phone [loc able?])
+(defrecord Exit [loc open?])
 
 ;; Characters objects
 (defrecord Caretaker [message loc face hidden treasure arms legs mouth susp? aware?])
@@ -96,7 +108,9 @@
   [world-state character-keyword end]
     (if (can-move? (:move-edges world-state) (get-in world-state [:character-list character-keyword :loc]) end)
       (assoc-in world-state [:character-list character-keyword :loc] end)
-      (print "Invalid move."))
+      (do (print-2n "Invalid move.")
+          world-state
+          ))
   )
 
 
@@ -150,7 +164,7 @@
   )
 (defn start
   []
-  (let [initial-state (Game-state. (repeat 2 (make-phone)) (make-exits) (make-treasure) (make-characters) (repeat 3 (make-neighbor)) move-edges false :cat)]
+  (let [initial-state (Game-state. (repeat 2 (make-phone)) (make-exits) (make-treasure) (make-characters) (repeat 3 (make-neighbor)) (move-edges) false :cat)]
     (play initial-state)
     )
   )
