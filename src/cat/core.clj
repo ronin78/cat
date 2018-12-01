@@ -11,38 +11,77 @@
 (def car-treasure 10)
 (def num-spaces 100)
 (def max-move 4)
+;(defn space-vec
+;  [prefix num-spaces]
+;  (vec (map #(str prefix %) (range 1 (+ num-spaces 1))))
+;  )
 (defn space-vec
-  [prefix num-spaces]
-  (vec (map #(str prefix %) (range 1 (+ num-spaces 1))))
+  ([num-spaces]
+  (vec (range 1 (+ num-spaces 1)))
+   )
+  ([start end]
+   (vec  (range start (+ num-spaces 1)))
+   )
   )
+
 (def spaces [
-             (vec (map #(str "S" %) [1 2]))
-             (vec (map #(str "P" %) [1 2]))
-             (vec (map #(str "SD" %) (range 1 10)))
-             (vec (map #(str "BD" %) (range 1 10)))
-             (vec (map #(str "H" %) (range 1 30)))
-             (vec (map #(str "D" %) (range 1 14)))
-             (vec (map #(str "DB" %) (range 1 13)))
-             (vec (map #(str "DR" %) (range 1 3)))
-             (space-vec "SF" 3)
-             (space-vec "K" 27)
-             (space-vec "L" 1)
-             (space-vec "O" 10)
-             ["S2" "SD1"]
-             ["S1" "P1"]
-             ["H1" "P2"]
-             ["SF3" "SD6"]
-             ["H13" "K1"]
-             ["H2" "D1"]
-             ["H4" "DB1"]
-             ["DB6" "DR1"]
-             ["DB6" "DR2"]
-             ["H16" "K6"]
-             ["H19" "O1"]
-             ["H19" "L1"]
-             ["H13" "SF1"]
-             ["H13" "SF2"]
+             [1 2]
+             [1 3]
+             [2 5]
+             (space-vec 5 13)
+             (space-vec 14 24)
+             [18 25]
+             (space-vec 25 36)
+             [28 37]
+             [37 38]
+             [29 39]
+             [39 40]
+             [31 39]
+             [32 40]
+             [24 37]
+             [24 38]
+             [23 53]
+             (space-vec 40 52)
+             [43 52]
+             [43 53]
+             [44 53]
+             (space-vec 54 66)
+             [55 66]
+             [60 67]
+             [60 68]
+             [38 69]
+             [38 70]
+             (space-vec 70 79)
+             [70 79]
              ])
+;(def spaces [
+;             (vec (map #(str "S" %) [1 2]))
+;             (vec (map #(str "P" %) [1 2]))
+;             (vec (map #(str "SD" %) (range 1 10)))
+;             (vec (map #(str "BD" %) (range 1 10)))
+;             (vec (map #(str "H" %) (range 1 30)))
+;             (vec (map #(str "D" %) (range 1 14)))
+;             (vec (map #(str "DB" %) (range 1 13)))
+;             (vec (map #(str "DR" %) (range 1 3)))
+;             (space-vec "SF" 3)
+;             (space-vec "K" 27)
+;             (space-vec "L" 1)
+;             (space-vec "O" 10)
+;             ["S2" "SD1"]
+;             ["S1" "P1"]
+;             ["H1" "P2"]
+;             ["SF3" "SD6"]
+;             ["H13" "K1"]
+;             ["H2" "D1"]
+;             ["H4" "DB1"]
+;             ["DB6" "DR1"]
+;             ["DB6" "DR2"]
+;             ["H16" "K6"]
+;             ["H19" "O1"]
+;             ["H19" "L1"]
+;             ["H13" "SF1"]
+;             ["H13" "SF2"]
+;             ])
 
 ;; Helper functions
 (defn print-2n
@@ -61,7 +100,7 @@
   )
 (defn random-space
   []
-  (rand-nth (flatten spaces))
+  (rand-nth (set spaces))
   )
 (defn random-dir
   []
@@ -74,6 +113,12 @@
     false
     )
   )
+(defn is-treasure?
+  [world-state loc]
+  (let [treasure-list (:treasure-list world-state)]
+    (loc treasure-list)
+    )
+  )
 
 ;; World objects
 (defrecord Game-state [phone-list exit-list treasure-list character-list neighbor-list move-edges combat? turn])
@@ -81,8 +126,8 @@
 (defrecord Exit [loc open?])
 
 ;; Characters objects
-(defrecord Caretaker [message loc face hidden treasure arms legs mouth susp? aware?])
-(defrecord Cat [message loc face hidden treasure arms legs mouth])
+(defrecord Caretaker [message loc face hidden treasure arms legs mouth muffled? susp? aware?])
+(defrecord Cat [message loc face hidden treasure arms legs mouth muffled?])
 (defrecord Neighbor [alert-count investigating?])
 (def general-movelist ["move"])
 (def door-movelist ["check door" "open door" "close door" "lock door"])
@@ -104,15 +149,19 @@
       nil
       ))
   )
+(defn make-noise
+  [move-num]
+  (- (rand-int 1 7) (- 4 move-num))
+  )
 (defn move
   [world-state character-keyword end]
-    (if (can-move? (:move-edges world-state) (get-in world-state [:character-list character-keyword :loc]) end)
-      (assoc-in world-state [:character-list character-keyword :loc] end)
-      (do (print-2n "Invalid move.")
+  (let [move-num (can-move? (:move-edges world-state) (get-in world-state [:character-list character-keyword :loc]) end)]
+    (if move-num
+      (do (make-noise move-num) (assoc-in world-state [:character-list character-keyword :loc] end))
+      (do (print-2n "You cannot move there.")
           world-state
-          ))
+          )))
   )
-
 
 ;; Object functions
 (defn make-phone
@@ -140,9 +189,17 @@
 
 ;; Game functions
 (defn print-message
-  [player]
-  (do (print (str (:message player) "\n\nYou are at location " (:loc player) "."))
-      (print (str "\n> "))
+  [world-state player]
+  (do (print-pr (str (:message player) "\n\nYou are at location " (:loc player) "."))
+      (cond (:susp? player) (println "You are suspicious."))
+      (cond (:aware player) (println "You are aware of the Cat."))
+      (cond (is-treasure? (world-state :loc player))
+        (println "There is " (is-treasure? (world-state :loc player)) " at your location.")
+        )
+      (cond (:muffled? player) (println "You are muffled."))
+      (cond (> 0 (:arms player)) (println "Your arms are subdued by " (:arms player) "."))
+      (cond (> 0 (:legs player)) (println "Your legs are subdued by " (:legs player) "."))
+      (cond (> 0 (:mouth player)) (println "Your mouth is subdued by " (:mouth player) "."))
       )
   )
 (defn play
@@ -154,7 +211,7 @@
      (let [input (read-line)]
        (cond 
          (or (= input "quit") (= input "q")) nil
-         (= input "move") (do (print "Where would you like to move?\n> ")
+         (= input "move") (do (print-pr "Where would you like to move?")
                                 (flush)
                                 (play (move world-state active-character (read-line)))
                                 ) 
