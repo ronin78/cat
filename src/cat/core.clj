@@ -9,24 +9,24 @@
 ;; Constants
 (def treasure 40)
 (def car-treasure 10)
-(def num-spaces 100)
 (def max-move 4)
 ;(defn space-vec
 ;  [prefix num-spaces]
 ;  (vec (map #(str prefix %) (range 1 (+ num-spaces 1))))
 ;  )
 (defn space-vec
-  ([num-spaces]
-  (vec (range 1 (+ num-spaces 1)))
+  ([end]
+  (vec (range 1 (+ end 1)))
    )
   ([start end]
-   (vec  (range start (+ num-spaces 1)))
+   (vec  (range start (+ end 1)))
    )
   )
 
 (def spaces [
              [1 2]
              [1 3]
+             [3 4]
              [2 5]
              (space-vec 5 13)
              (space-vec 14 24)
@@ -46,6 +46,7 @@
              [43 53]
              [44 53]
              (space-vec 54 66)
+             [15 54]
              [55 66]
              [60 67]
              [60 68]
@@ -90,17 +91,37 @@
   )
 (defn print-pr
   [s]
-  (println (str s "> "))
+  (print (str s "\n> "))
   )
 
 ;; World functions
+(defn add-exit-edges
+  [edge-list exit-edges]
+     (uber/add-edges* edge-list exit-edges)
+  )
+(defn remove-exit-edges
+  [edge-list exit-edges]
+     (uber/remove-edges* edge-list exit-edges)
+  )
+(defn open-exits?
+  [exit-list]
+  (mapv #(:loc (val %)) (filter #(:open? (val %)) exit-list))
+  )
+(defn locked-exits?
+  [exit-list]
+  (mapv #(:loc (val %)) (filter #(not (:open? (val %))) exit-list))
+  )
 (defn move-edges
-  []
-   (apply uber/graph (mapcat #(map vec (partition 2 1 %)) spaces)) 
+  [exit-list]
+   (let [main-edges (apply uber/graph (mapcat #(map vec (partition 2 1 %)) spaces))
+         open-exits (open-exits? exit-list)
+         ]
+     (add-exit-edges main-edges open-exits)
+     ) 
   )
 (defn random-space
   []
-  (rand-nth (set spaces))
+  (rand-nth (into () (remove #(> 14 %) (set (flatten spaces)))))
   )
 (defn random-dir
   []
@@ -116,7 +137,7 @@
 (defn is-treasure?
   [world-state loc]
   (let [treasure-list (:treasure-list world-state)]
-    (loc treasure-list)
+    (get treasure-list loc)
     )
   )
 
@@ -141,6 +162,13 @@
 (def cat-charm ["charm"])
 
 ;; Character functions
+(defn change-character
+  [world-state]
+  (cond 
+    (= (:turn world-state) :cat) (assoc world-state :turn :caretaker)
+    (= (:turn world-state):caretaker) (assoc world-state :turn :cat)
+    )
+  )
 (defn can-move?
   [move-edges start end]
   (let [path (alg/shortest-path move-edges start end)] 
@@ -151,13 +179,13 @@
   )
 (defn make-noise
   [move-num]
-  (- (rand-int 1 7) (- 4 move-num))
+  (- (+ 1 (rand-int 6)) (- 4 move-num))
   )
 (defn move
   [world-state character-keyword end]
   (let [move-num (can-move? (:move-edges world-state) (get-in world-state [:character-list character-keyword :loc]) end)]
     (if move-num
-      (do (make-noise move-num) (assoc-in world-state [:character-list character-keyword :loc] end))
+      (do (make-noise move-num) (change-character (assoc-in world-state [:character-list character-keyword :loc] end)))
       (do (print-2n "You cannot move there.")
           world-state
           )))
@@ -170,7 +198,7 @@
   )
 (defn make-exits
   []
-  (list (Exit. 1 (rand-open)) (Exit. 50 (rand-open)))
+  (hash-map :front (Exit. [4 14] (rand-open)) :side (Exit. [10 39] (rand-open)))
   )
 (defn make-neighbor
   []
@@ -184,44 +212,190 @@
 (def caretaker-message "You are the Caretaker. Your best friend is taking a long vacation and has asked you to housesit while he is away. You amuse yourself by working a little, playing a little, lounging a little. One of the neighbors mentioned to you yesterday that several houses in the area have recently been robbed. You hope that the burglar will steer clear of your friend’s house...but if they don’t, you’re not giving up your friend’s valuables without a fight.")
 (defn make-characters
   []
-  (hash-map :caretaker (Caretaker. caretaker-message (random-space) (random-dir) false 0 0 0 0 false false) :cat (Cat. cat-message "S1" :up false 0 0 0 0))
+  (hash-map :caretaker (Caretaker. caretaker-message (random-space) (random-dir) false 0 0 0 0 false false false) :cat (Cat. cat-message 1 :up false 0 0 0 0 false))
   )
 
 ;; Game functions
+(defn get-player
+  [world-state]
+  (get-in world-state [:character-list (:turn world-state)])
+  )
+(defn available-exit
+  [world-state loc]
+  (first (filter #(contains? (set (:loc (val %))) loc) (:exit-list world-state)))
+  )
+(defn check-door
+  [world-state player]
+  (let [loc (:loc player)
+        available-exit (available-exit world-state loc)
+        ]
+    (if (nil? available-exit)
+      (println "There are no doors near you.")
+      (let [open? (:open? (val available-exit))]
+        (if open?
+          (println "The door in front of you is unlocked.")
+          (println "The door in front of you is locked.")
+          )
+        )
+      )
+    )
+  )
+(defn unlock-exit
+  [world-state exit]
+  (let [unlock-state (assoc-in world-state [:exit-list (key exit) :open?] true)]
+  (assoc unlock-state :move-edges (add-exit-edges (:move-edges unlock-state) (open-exits? (:exit-list unlock-state)))))
+  )
+(defn lock-exit
+  [world-state exit]
+  (let [lock-state (assoc-in world-state [:exit-list (key exit) :open?] false)]
+  (do (assoc lock-state :move-edges (remove-exit-edges (:move-edges lock-state) (locked-exits? (:exit-list lock-state))))
+      (println "The door in front of you is now locked.")
+      )) 
+  )
+(defn unlock-door
+  [world-state player]
+  (let [loc (:loc player)
+        available-exit (available-exit world-state loc)
+        ]
+    (if (= (:turn world-state) :caretaker)
+      (if (nil? available-exit)
+        (do (println "There are no doors near you.")
+            world-state
+            )
+        (let [open? (:open? available-exit)]
+          (if open?
+            (do (println "The door in front of you is already unlocked!")
+                world-state
+                )
+            (do (println "The door in front of you is now unlocked.")
+                (change-character (unlock-exit world-state available-exit))
+                )
+            )
+          )
+        )
+      (do (println "This isn't your house!")
+          world-state
+          )
+      )
+    )
+  )
+(defn pick-lock
+  [world-state player]
+  (let [loc (:loc player)
+        available-exit (available-exit world-state loc)
+        ]
+    (if (= (:turn world-state) :cat)
+      (if (nil? available-exit)
+        (do (println "There are no doors near you.")
+            world-state
+            )
+        (let [open? (:open? available-exit)]
+          (if open?
+            (do (println "The door in front of you is already unlocked!")
+                world-state
+                )
+            (do (println "The door in front of you is now unlocked.")
+                (change-character (unlock-exit world-state available-exit))
+                )
+            )
+          )
+        )
+      (do (println "You don't know how to do that.")
+          world-state
+          )
+      )
+    )
+  )
+(defn lock-door
+  [world-state player]
+  (let [loc (:loc player)
+        available-exit (available-exit world-state loc)
+        ]
+    (if (= (:turn world-state) :caretaker)
+      (if (nil? available-exit)
+        (do (println "There are no doors near you.")
+            world-state
+            )
+        (let [open? (:open? available-exit)]
+          (if open?
+            (do (println "The door in front of you is now locked.")
+                (change-character (lock-exit world-state available-exit))
+                )
+            (do (println "The door in front of you is already locked!")
+                world-state
+                )
+            )
+          )
+        )
+      (do (println "Are you sure you want to do that?")
+          world-state
+          )
+      )
+    )
+  )
+(defn remove-treasure-from-list
+  [treasure-list loc]
+  (dissoc treasure-list loc)
+  )
+(defn pickup-treasure
+  [world-state player]
+  (if (is-treasure? world-state (:loc player))
+    (let [loc (:loc player)
+          treasure-amt (is-treasure? world-state loc)
+          player-amt (get-in world-state [:character-list (:turn world-state) :treasure])
+          ]
+      (change-character 
+        (assoc-in (assoc world-state :treasure-list (remove-treasure-from-list (:treasure-list world-state) loc)) [:character-list (:turn world-state) :treasure] (+ player-amt treasure-amt)))   
+;(println player-amt)
+      )
+    world-state
+    )
+  )
 (defn print-message
   [world-state player]
-  (do (print-pr (str (:message player) "\n\nYou are at location " (:loc player) "."))
+  (do (println (str (:message player) "\n\nYou are at location " (:loc player) "."))
       (cond (:susp? player) (println "You are suspicious."))
       (cond (:aware player) (println "You are aware of the Cat."))
-      (cond (is-treasure? (world-state :loc player))
-        (println "There is " (is-treasure? (world-state :loc player)) " at your location.")
+      (cond (is-treasure? world-state (:loc player))
+        (println "There is " (is-treasure? world-state (:loc player)) " treasure at your location.")
         )
+      (cond (> (:treasure player) 0) (println "You have " (:treasure player) "treasure."))
       (cond (:muffled? player) (println "You are muffled."))
       (cond (> 0 (:arms player)) (println "Your arms are subdued by " (:arms player) "."))
       (cond (> 0 (:legs player)) (println "Your legs are subdued by " (:legs player) "."))
       (cond (> 0 (:mouth player)) (println "Your mouth is subdued by " (:mouth player) "."))
+      (print-pr "What would you like to do?")
       )
   )
 (defn play
   [world-state]
-   (let [active-character (:turn world-state)]
+   (let [active-character (:turn world-state)
+         available-exit (available-exit world-state (get-in world-state [:character-list (:turn world-state) :loc]))
+         ]
    (do 
-     (print-message (get-in world-state [:character-list (:turn world-state)] world-state))
+     (print-message world-state (get-in world-state [:character-list (:turn world-state)] world-state))
      (flush)
      (let [input (read-line)]
        (cond 
          (or (= input "quit") (= input "q")) nil
          (= input "move") (do (print-pr "Where would you like to move?")
                                 (flush)
-                                (play (move world-state active-character (read-line)))
+                                (play (move world-state active-character (Integer. (read-line))))
                                 ) 
-                            
-         :else (do (print "Invalid selection.") (play world-state))
+         (= input "check door") (do (check-door world-state (get-player world-state))
+                                    (play world-state)
+                                    )
+         (= input "pick lock") (play (pick-lock world-state (get-player world-state)))
+         (= input "unlock door") (play (unlock-door world-state (get-player world-state)))
+         (= input "lock door") (play (lock-door world-state available-exit))
+         (= input "pick up treasure") (play (pickup-treasure world-state (get-player world-state)))                        
+         :else (do (println "Invalid selection.") (play world-state))
          ))))
   )
 (defn start
   []
-  (let [initial-state (Game-state. (repeat 2 (make-phone)) (make-exits) (make-treasure) (make-characters) (repeat 3 (make-neighbor)) (move-edges) false :cat)]
+  (let [exit-list (make-exits)
+        initial-state (Game-state. (repeat 2 (make-phone)) exit-list (make-treasure) (make-characters) (repeat 3 (make-neighbor)) (move-edges exit-list) false :cat)]
     (play initial-state)
     )
   )
