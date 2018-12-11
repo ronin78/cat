@@ -16,73 +16,64 @@
 ;  )
 (defn space-vec
   ([end]
-  (vec (range 1 (+ end 1)))
+  (map #(keyword (str %)) (vec (range 1 (+ end 1))))
    )
   ([start end]
-   (vec  (range start (+ end 1)))
+   (map #(keyword (str %)) (vec (range start (+ end 1))))
    )
   )
+(defn edge-details 
+  [g start end] 
+    (uber/attr g (last (alg/edges-in-path (alg/shortest-path g start end))) :direction)
+  )
+
 
 (def spaces [
-             [1 2]
-             [1 3]
-             [3 4]
-             [2 5]
-             (space-vec 5 13)
-             (space-vec 14 24)
-             [18 25]
-             (space-vec 25 36)
-             [28 37]
-             [37 38]
-             [29 39]
-             [39 40]
-             [31 39]
-             [32 40]
-             [24 37]
-             [24 38]
-             [23 53]
-             (space-vec 40 52)
-             [43 52]
-             [43 53]
-             [44 53]
-             (space-vec 54 66)
-             [15 54]
-             [55 66]
-             [60 67]
-             [60 68]
-             [38 69]
-             [38 70]
-             (space-vec 70 79)
-             [70 79]
+             [[:1 :2] :left]
+             [[:1 :3] :up]
+             [[:3 :4] :up]
+             [[:2 :5] :up]
+             [(space-vec 5 13) :up]
+             [(space-vec 14 18) :up] 
+             [(space-vec 18 24) :left] 
+             [[:18 :25] :right]
+             [(space-vec 25 30) :up]
+             [(space-vec 30 36) :right]
+             [[:28 :37] :right]
+             [[:37 :38] :right]
+             [[:29 :39] :right]
+             [[:39 :40] :right]
+             [[:31 :39] :down]
+             [[:37 :39] :up]
+             [[:32 :40] :down]
+             [[:38 :40] :up]
+             [[:24 :37] :left]
+             [[:24 :38] :left]
+             [[:23 :53] :down]
+             [(space-vec 40 46) :left]
+             [(space-vec 46 48) :down]
+             [(space-vec 48 51) :right]
+             [[:43 :52] :down]
+             [[:43 :53] :up]
+             [[:44 :53] :up]
+             [(space-vec 54 60) :right]
+             [(space-vec 60 62) :down]
+             [(space-vec 62 65) :left]
+             [[:65 :66] :up]
+             [[:56 :66] :down]
+             [[:15 :40] :left]
+             [[:15 :54] :right]
+             [[:55 :66] :right]
+             [[:60 :67] :up]
+             [[:60 :68] :up]
+             [[:38 :69] :down]
+             [[:38 :70] :right]
+             [(space-vec 70 73) :right]
+             [(space-vec 73 75) :down]
+             [(space-vec 75 78) :left]
+             [[:70 :79] :down]
+             [[:78 :79] :up]
              ])
-;(def spaces [
-;             (vec (map #(str "S" %) [1 2]))
-;             (vec (map #(str "P" %) [1 2]))
-;             (vec (map #(str "SD" %) (range 1 10)))
-;             (vec (map #(str "BD" %) (range 1 10)))
-;             (vec (map #(str "H" %) (range 1 30)))
-;             (vec (map #(str "D" %) (range 1 14)))
-;             (vec (map #(str "DB" %) (range 1 13)))
-;             (vec (map #(str "DR" %) (range 1 3)))
-;             (space-vec "SF" 3)
-;             (space-vec "K" 27)
-;             (space-vec "L" 1)
-;             (space-vec "O" 10)
-;             ["S2" "SD1"]
-;             ["S1" "P1"]
-;             ["H1" "P2"]
-;             ["SF3" "SD6"]
-;             ["H13" "K1"]
-;             ["H2" "D1"]
-;             ["H4" "DB1"]
-;             ["DB6" "DR1"]
-;             ["DB6" "DR2"]
-;             ["H16" "K6"]
-;             ["H19" "O1"]
-;             ["H19" "L1"]
-;             ["H13" "SF1"]
-;             ["H13" "SF2"]
-;             ])
 
 ;; Helper functions
 (defn print-2n
@@ -92,6 +83,16 @@
 (defn print-pr
   [s]
   (print (str s "\n> "))
+  )
+(defn opp-dir
+  [d]
+  (cond
+    (= d :up) :down
+    (= d :down) :up
+    (= d :left) :right
+    (= d :right) :left
+    :else nil
+    )
   )
 
 ;; World functions
@@ -105,11 +106,11 @@
   )
 (defn open-exits?
   [exit-list]
-  (mapv #(:loc (val %)) (filter #(:open? (val %)) exit-list))
+  (vec (mapcat #(:loc (val %)) (filter #(:open? (val %)) exit-list)))
   )
 (defn locked-exits?
   [exit-list]
-  (mapv #(:loc (val %)) (filter #(not (:open? (val %))) exit-list))
+  (vec (mapcat #(:loc (val %)) (filter #(not (:open? (val %))) exit-list)))
   )
 (defn move-edges
   [exit-list]
@@ -119,9 +120,19 @@
      (add-exit-edges main-edges open-exits)
      ) 
   )
+(defn move-dir-edges
+  [exit-list]
+   (let [space-edges (mapcat (fn [e] (mapv #(into [] (flatten [% {:direction (last e)}])) (partition 2 1 (first e)))) spaces)
+         rev-edges (mapv #(into [] (flatten [(reverse (drop-last %)) {:direction (opp-dir (:direction (last %)))}])) space-edges)
+         main-edges (apply uber/multidigraph (into [] (concat space-edges rev-edges)))
+         open-exits (open-exits? exit-list)
+         ]
+     (add-exit-edges main-edges open-exits)
+     ) 
+  )
 (defn random-space
   []
-  (rand-nth (into () (remove #(> 14 %) (set (flatten spaces)))))
+  (rand-nth (into () (remove #(> 14 (Integer. (name %))) (set (flatten (map first spaces))))))
   )
 (defn random-dir
   []
@@ -162,12 +173,15 @@
 (def cat-charm ["charm"])
 
 ;; Character functions
+(defn other-character
+  [character]
+  (cond
+    (= character :cat) :caretaker
+    (= character :caretaker) :cat)
+  )
 (defn change-character
   [world-state]
-  (cond 
-    (= (:turn world-state) :cat) (assoc world-state :turn :caretaker)
-    (= (:turn world-state):caretaker) (assoc world-state :turn :cat)
-    )
+  (assoc world-state :turn (other-character (:turn world-state)))
   )
 (defn can-move?
   [move-edges start end]
@@ -177,15 +191,40 @@
       nil
       ))
   )
+(defn can-see?
+  [see-edges player opponent]
+  (let [ploc (:loc player)
+        oloc (:loc opponent)
+        pdir (:face player)
+        odir (:face opponent)
+        path (alg/shortest-path see-edges ploc oloc)
+        edges (alg/edges-in-path path)]
+    (cond 
+      (nil? path) nil
+      (= (uber/attr see-edges (first edges) :direction) (opp-dir pdir)) nil
+      (every? #(= (uber/attr see-edges % :direction) pdir) edges) {:see-loc oloc :see-dir odir}
+      (and (< (:cost path) max-move) (every? #(= (uber/attr see-edges % :direction) (uber/attr see-edges (first see-edges) :direction)) edges)) {:see-loc oloc :see-dir odir}
+      :else nil
+          )
+    )
+  )
 (defn make-noise
-  [move-num]
-  (- (+ 1 (rand-int 6)) (- 4 move-num))
+  ([move-num]
+   (println "You moved " move-num " and made " (max (- (+ 1 (rand-int 6)) (- 4 move-num)) 0) " noise!")
+  )
+  ([move-num start end]
+   (println "You moved " move-num "from space " (name start) "to space " (name end) " and made " (max (- (+ 1 (rand-int 6)) (- 4 move-num)) 0) " noise!") 
+   )
   )
 (defn move
   [world-state character-keyword end]
-  (let [move-num (can-move? (:move-edges world-state) (get-in world-state [:character-list character-keyword :loc]) end)]
+  (let [start-loc (get-in world-state [:character-list character-keyword :loc])
+        move-num (can-move? (:move-edges world-state) start-loc end)]
     (if move-num
-      (do (make-noise move-num) (change-character (assoc-in world-state [:character-list character-keyword :loc] end)))
+      (do 
+        (make-noise move-num start-loc end) 
+        (change-character (update-in world-state [:character-list character-keyword] assoc :loc end :face (edge-details (:move-edges world-state) start-loc end)))
+          )
       (do (print-2n "You cannot move there.")
           world-state
           )))
@@ -198,7 +237,7 @@
   )
 (defn make-exits
   []
-  (hash-map :front (Exit. [4 14] (rand-open)) :side (Exit. [10 39] (rand-open)))
+  (hash-map :front (Exit. [[:4 :14 {:direction :up}] [:14 :4 {:direction :down}]] (rand-open)) :side (Exit. [[:10 :39 {:direction :right}] [:39 :10 {:direction :left}]] (rand-open)))
   )
 (defn make-neighbor
   []
@@ -212,7 +251,7 @@
 (def caretaker-message "You are the Caretaker. Your best friend is taking a long vacation and has asked you to housesit while he is away. You amuse yourself by working a little, playing a little, lounging a little. One of the neighbors mentioned to you yesterday that several houses in the area have recently been robbed. You hope that the burglar will steer clear of your friend’s house...but if they don’t, you’re not giving up your friend’s valuables without a fight.")
 (defn make-characters
   []
-  (hash-map :caretaker (Caretaker. caretaker-message (random-space) (random-dir) false 0 0 0 0 false false false) :cat (Cat. cat-message 1 :up false 0 0 0 0 false))
+  (hash-map :caretaker (Caretaker. caretaker-message (random-space) (random-dir) false 0 0 0 0 false false false) :cat (Cat. cat-message :1 :up false 0 0 0 0 false))
   )
 
 ;; Game functions
@@ -222,7 +261,7 @@
   )
 (defn available-exit
   [world-state loc]
-  (first (filter #(contains? (set (:loc (val %))) loc) (:exit-list world-state)))
+  (first (filter #(contains? (set (drop-last (first (:loc (val %))))) loc) (:exit-list world-state)))
   )
 (defn check-door
   [world-state player]
@@ -352,8 +391,12 @@
     )
   )
 (defn print-message
-  [world-state player]
-  (do (println (str (:message player) "\n\nYou are at location " (:loc player) "."))
+  [world-state active-character]
+  (let [player (get-in world-state [:character-list active-character])
+        opponent (get-in world-state [:character-list (other-character active-character)])]
+  (do (println (str (:message player)))
+      (cond (can-see? (:move-edges world-state) player opponent) (println "You see someone at " (:loc opponent) " facing " (:face opponent)))
+      (println "\nYou are at location " (name (:loc player)) " facing " (name (:face player)) ".")
       (cond (:susp? player) (println "You are suspicious."))
       (cond (:aware player) (println "You are aware of the Cat."))
       (cond (is-treasure? world-state (:loc player))
@@ -365,37 +408,40 @@
       (cond (> 0 (:legs player)) (println "Your legs are subdued by " (:legs player) "."))
       (cond (> 0 (:mouth player)) (println "Your mouth is subdued by " (:mouth player) "."))
       (print-pr "What would you like to do?")
-      )
+      ))
   )
 (defn play
   [world-state]
    (let [active-character (:turn world-state)
-         available-exit (available-exit world-state (get-in world-state [:character-list (:turn world-state) :loc]))
-         ]
-   (do 
-     (print-message world-state (get-in world-state [:character-list (:turn world-state)] world-state))
-     (flush)
-     (let [input (read-line)]
-       (cond 
-         (or (= input "quit") (= input "q")) nil
-         (= input "move") (do (print-pr "Where would you like to move?")
-                                (flush)
-                                (play (move world-state active-character (Integer. (read-line))))
-                                ) 
-         (= input "check door") (do (check-door world-state (get-player world-state))
-                                    (play world-state)
-                                    )
-         (= input "pick lock") (play (pick-lock world-state (get-player world-state)))
-         (= input "unlock door") (play (unlock-door world-state (get-player world-state)))
-         (= input "lock door") (play (lock-door world-state available-exit))
-         (= input "pick up treasure") (play (pickup-treasure world-state (get-player world-state)))                        
-         :else (do (println "Invalid selection.") (play world-state))
-         ))))
-  )
+         opponent (other-character active-character)]
+     (if (and (= active-character :caretaker) 
+              (= (get-in world-state [:character-list active-character :aware?]) false) 
+              (can-see? (:move-edges world-state) (get-in world-state [:character-list active-character]) (get-in world-state [:character-list opponent])))
+       (play (assoc-in world-state [:character-list active-character :aware?] true))
+       (do 
+         (print-message world-state active-character)
+         (flush)
+         (let [input (read-line)]
+           (cond 
+             (or (= input "quit") (= input "q")) nil
+             (= input "move") (do (print-pr "Where would you like to move?")
+                                  (flush)
+                                  (play (move world-state active-character (keyword (read-line))))
+                                  ) 
+             (= input "check door") (do (check-door world-state (get-player world-state))
+                                        (play world-state)
+                                        )
+             (= input "pick lock") (play (pick-lock world-state (get-player world-state)))
+             (= input "unlock door") (play (unlock-door world-state (get-player world-state)))
+             (= input "lock door") (play (lock-door world-state (available-exit world-state (get-in world-state [:character-list active-character :loc]))))
+             (= input "pick up treasure") (play (pickup-treasure world-state (get-player world-state)))                        
+             :else (do (println "Invalid selection.") (play world-state))
+             )))))
+   )
 (defn start
   []
   (let [exit-list (make-exits)
-        initial-state (Game-state. (repeat 2 (make-phone)) exit-list (make-treasure) (make-characters) (repeat 3 (make-neighbor)) (move-edges exit-list) false :cat)]
+        initial-state (Game-state. (repeat 2 (make-phone)) exit-list (make-treasure) (make-characters) (repeat 3 (make-neighbor)) (move-dir-edges exit-list) false :cat)]
     (play initial-state)
     )
   )
