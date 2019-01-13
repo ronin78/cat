@@ -350,13 +350,9 @@
   [edge-list exit-edges]
      (uber/remove-edges* edge-list exit-edges)
   )
-(defn open-exits?
-  [exit-list]
-  (vec (mapcat #(:loc (val %)) (filter #(:open? (val %)) exit-list)))
-  )
-(defn locked-exits?
-  [exit-list]
-  (vec (mapcat #(:loc (val %)) (filter #(not (:open? (val %))) exit-list)))
+(defn find-exits
+  [exit-list f]
+  (vec (mapcat #(:loc (val %)) (filter #(f (val %)) exit-list)))
   )
 (defn make-edge-with-reverse
   ([space-vec]
@@ -376,7 +372,7 @@
 (def sound-edges (add-edges view-edges-no-hidden (make-edge-with-reverse sound-spaces 2)))
 (defn move-edges-with-exit
   [exit-list]
-  (add-edges main-edges (open-exits? exit-list))
+  (add-edges main-edges (find-exits exit-list :open?))
   )
 (defn random-space
   []
@@ -405,14 +401,8 @@
   )
 
 ;; World objects
-(defrecord Game-state [phone-list exit-list treasure-list character-list neighbor-list move-edges combat? turn free-action?])
-(defrecord Phone [loc able?])
-(defrecord Exit [loc open?])
 
 ;; Characters objects
-(defrecord Caretaker [message add-message loc face hidden treasure treasure-map noise-map arms arm-mat legs leg-mat mouth in-mouth-mat over-mouth-mat muffled? susp-count aware? fix-count lock-count unlock-count])
-(defrecord Cat [message add-message loc face hidden treasure treasure-map noise-map arms arm-mat legs leg-mat mouth in-mouth-mat over-mouth-mat muffled? sabotage-count lock-count picklock-count])
-(defrecord Neighbor [alert-count investigating?])
 
 ;; Character functions
 (def cat-message-first "You are the Cat, the most notorious cat burglar in the Southern United States. You appear, appropriate and abscond -- leaving bereft owners wriggling in your wake, if need be. You’ve recently opened shop in Decatur, GA. Having hit three houses this week, you’ve already identified your next victim...")
@@ -421,8 +411,26 @@
 (def caretaker-message "You are the Caretaker.")
 (defn make-characters
   []
-  (hash-map :caretaker (Caretaker. caretaker-message-first "" (random-space) (random-dir) false 0 {} {} 0 nil 0 nil 0 nil nil false 0 false {} {} {}) 
-            :cat (Cat. cat-message-first "" :1 :up false 0 {} {} 0 nil 0 nil 0 nil nil false {} {} {}))
+  (hash-map :caretaker {:message caretaker-message-first
+                        :loc (random-space)
+                        :face (random-dir)
+                        :hidden false
+                        :treasure 0
+                        :arms 0
+                        :legs 0
+                        :mouth 0
+                        :muffled? false
+                        :susp-count 0
+                        :aware? false}
+            :cat {:message cat-message-first
+                        :loc :1
+                        :face :up
+                        :hidden false
+                        :treasure 0
+                        :arms 0
+                        :legs 0
+                        :mouth 0
+                        :muffled? false})
   )
 (defn other-character
   [character]
@@ -542,8 +550,8 @@
 ;; TODO Something wonky with the direction
 (defn can-hear?
   ([world-state]
-   (let [player (get-in world-state [:character-list (:turn world-state)])
-         opponent (get-in world-state [:character-list (other-character (:turn world-state))])
+   (let [player (get-player world-state) 
+         opponent (get-opponent world-state)
          p (alg/shortest-path sound-edges (:loc player) (:loc opponent))]
      (cond 
        (= (:loc player) (:loc opponent)) 0
@@ -553,7 +561,7 @@
      )
    )
   ([sound-edges ploc nmap]
-    (if-let [h (last (filter (fn [[k v]] (let [p (alg/shortest-path sound-edges ploc k)] (and p (<= (:cost p) v)))) nmap))]
+    (if-let [h (and nmap  (last (filter (fn [[k v]] (let [p (alg/shortest-path sound-edges ploc k)] (and p (<= (:cost p) v)))) nmap)))]
       (uber/attr sound-edges (first (alg/edges-in-path (alg/shortest-path sound-edges ploc (key h)))) :direction)
       nil
       ))
@@ -565,14 +573,18 @@
     :else (max (- (+ 1 (rand-int 6)) (- 4 move-num)) 0)
     )
   )
+(defn assoc-player
+  [world-state pkey & rest]
+   (apply (partial update-in world-state [:character-list pkey] assoc) rest) 
+  )
 (defn move
   [world-state character-keyword end]
-  (let [player (get-in world-state [:character-list character-keyword])
+  (let [player (get-player world-state)
         start-loc (:loc player)
         move-num (can-move? world-state start-loc end)]
     (if move-num
       (let [noise (move-noise world-state move-num)] 
-        (change-character (update-in world-state [:character-list character-keyword] assoc :loc end :face (edge-dir (:move-edges world-state) start-loc end) :noise-map (edge-noise sound-edges start-loc end noise) :add-message (str "On your last turn, you moved " move-num " from space " (name start-loc) " to space " (name end) " and made " noise " noise."))))
+        (change-character (assoc-player world-state character-keyword :loc end :face (edge-dir (:move-edges world-state) start-loc end) :noise-map (edge-noise sound-edges start-loc end noise) :add-message (str "On your last turn, you moved " move-num " from space " (name start-loc) " to space " (name end) " and made " noise " noise."))))
       (do (print-2n (str "You cannot move there."))
           world-state
           )))
@@ -582,8 +594,10 @@
   (let [player (get-player world-state)
         update-for-noise (fn [n] 
                            (change-character 
-                             (update-in world-state [:character-list :caretaker] assoc :noise-map (edge-noise sound-edges (get-player-loc world-state) n) 
-                                        :add-message (str "On your last turn, you yelled for " n "noise!"))))
+                             (assoc-player world-state :caretaker 
+                                           :noise-map (edge-noise sound-edges (get-player-loc world-state) n)
+                                           :add-message (str "On your last turn, you yelled for " n "noise!")  
+                                           )))
         ]
   (cond 
     (= (:turn world-state) :cat) (do (println "What part of 'cat burglar' don't you understand?")
@@ -625,7 +639,7 @@
                     4
                     )
         update-for-noise (fn [n] 
-                       (update-in world-state [:character-list :cat] assoc :noise-map (edge-noise sound-edges (get-player-loc world-state) n)))
+                       (assoc-player world-state :cat :noise-map (edge-noise sound-edges (get-player-loc world-state) n)))
         ]
     (cond 
       (= (:turn world-state) :caretaker) (do (println "You're not that charming.")
@@ -668,7 +682,10 @@
 ;; Object functions
 (defn make-phones
   []
-  (hash-map :phone1 (Phone. (random-space) true) :phone2 (Phone. (random-space) true))
+  (hash-map :phone1 {:loc (random-space)
+                     :able? true} 
+            :phone2 {:loc (random-space)
+                     :able? true})
   )
 (defn find-phones
   [world-state]
@@ -676,14 +693,24 @@
   )
 (defn make-exits
   []
-  (hash-map :front (Exit. [[:4 :14 {:direction :up}] [:14 :4 {:direction :down}]] (rand-open)) :side (Exit. [[:10 :157 {:direction :right}] [:157 :10 {:direction :left}]] (rand-open))
-            :side-closet (Exit. [[:154 :155 {:direction :up}] [:155 :154 {:direction :down}]] true) :hall-closet (Exit. [[:137 :14 {:direction :left}] [:14 :137 {:direction :right}]] true)
-            :bottom-bedroom-closet (Exit. [[:62 :135 {:direction :up}] [:135 :62 {:direction :down}]] true) :top-bedroom-closet (Exit. [[:56 :136 {:direction :up}] [:136 :56 {:direction :down}]] true)
+  (hash-map :front {:loc [[:4 :14 {:direction :up}] [:14 :4 {:direction :down}]]
+                    :open? (rand-open)} 
+            :side {:loc [[:10 :157 {:direction :right}] [:157 :10 {:direction :left}]]
+                   :open? (rand-open)}
+            :side-closet {:loc [[:154 :155 {:direction :up}] [:155 :154 {:direction :down}]]
+                          :open? (rand-open)} 
+            :hall-closet {:loc [[:137 :14 {:direction :left}] [:14 :137 {:direction :right}]]
+                          :open? (rand-open)}
+            :bottom-bedroom-closet {:loc [[:62 :135 {:direction :up}] [:135 :62 {:direction :down}]]
+                                    :open? (rand-open)} 
+            :top-bedroom-closet {:loc [[:56 :136 {:direction :up}] [:136 :56 {:direction :down}]]
+                                 :open? (rand-open)}
             )
   )
 (defn make-neighbor
   []
-  (Neighbor. 0 false)
+  {:alert-count 0
+   :investigating? false}
   )
 (defn make-treasure
   []
@@ -781,10 +808,11 @@
   [world-state]
   (let [player (get-player world-state)
         opponent (get-opponent world-state)]
-    (cond (can-see? world-state (get-active-view-edges opponent) player opponent) (if (= (:turn world-state) :caretaker) 
-                                                                        (update-in world-state [:character-list :caretaker] assoc :message (make-message player (str "You see the Cat at " (name (:loc opponent)) " facing " (name (:face opponent)) ".")) :aware true)
-                                                                        (update-message world-state (str "You see the Caretaker at " (name (:loc opponent)) " facing " (name (:face opponent)) "."))
-                                                                        )
+    (cond (can-see? world-state (get-active-view-edges opponent) player opponent) 
+          (if (= (:turn world-state) :caretaker) 
+            (make-caretaker-aware (update-message world-state (make-message player (str "You see the Cat at " (name (:loc opponent)) " facing " (name (:face opponent)) ".")))) 
+            (update-message world-state (str "You see the Caretaker at " (name (:loc opponent)) " facing " (name (:face opponent)) "."))
+            )
           :else world-state
           )
     )
@@ -807,7 +835,7 @@
   (let [player (get-player world-state)]
       (cond (= (:turn world-state) :cat) world-state
             (:aware player) (update-message world-state (str "You are aware of the Cat.")) 
-            (> (:susp-count player) 2) (update-in world-state [:character-list (:turn world-state)] assoc :message (make-message player (str "Something is definitely wrong here. You are now Aware of the Cat.")) :aware true)
+            (> (:susp-count player) 2) (make-caretaker-aware (update-message (make-message player (str "Something is definitely wrong here. You are now Aware of the Cat.")))) 
             (> (:susp-count player) 0) (update-message world-state (make-message player (str "You are suspicious.")))
             :else world-state
             )
@@ -824,26 +852,29 @@
   )
 (defn treasure-here-text
   [world-state]
-  (let [player (get-player world-state)]
+  (let [player (get-player world-state)
+        loc (:loc player)
+        tm (:treasure-map player)
+        ]
     (cond 
-      (and (is-treasure? world-state (:loc player))
-           (= (is-treasure? world-state (:loc player)) (get (:treasure-map player) (:loc player)))
+      (and (is-treasure? world-state loc)
+           (= (is-treasure? world-state loc) (get tm loc))
            )
-      (update-message world-state (str "There is " (is-treasure? world-state (:loc player)) " treasure at your location.")) 
-      (and (is-treasure? world-state (:loc player))
-           (not (contains? (:treasure-map player) (:loc player)))
+      (update-message world-state (str "There is " (is-treasure? world-state loc) " treasure at your location.")) 
+      (and (is-treasure? world-state loc)
+           (not (contains? tm loc))
            )
-      (update-in world-state [:character-list (:turn world-state)] assoc :message (make-message player (str "There is " (is-treasure? world-state (:loc player)) " treasure at your location.")) [:treasure-map (:loc player)] (is-treasure? world-state (:loc player)))
-      (or (and (is-treasure? world-state (:loc player))
-               (not= (is-treasure? world-state (:loc player)) (get (:treasure-map player) (:loc player)))
+      (assoc-player :message (make-message player (str "There is " (is-treasure? world-state loc) " treasure at your location.")) [:treasure-map loc] (is-treasure? world-state loc)) 
+      (or (and (is-treasure? world-state loc)
+               (not= (is-treasure? world-state loc) (get (:treasure-map player) loc))
                )
-          (and (not (is-treasure? world-state (:loc player)))
-               (contains? (:treasure-map player) (:loc player))
+          (and (not (is-treasure? world-state loc))
+               (contains? tm loc)
                )    
           )
       (if (= (:turn world-state) :caretaker)
-        (update-in world-state [:character-list :caretaker] assoc :message (make-message player (str "There used to be " (get (:treasure-map player) (:loc player))  " treasure at this location!")) [:treasure-map (:loc player)] (is-treasure? world-state (:loc player)) :susp-count (inc (get-in world-state [:character-list :caretaker :susp-count])))
-        (update-in world-state [:character-list (:turn world-state)] assoc :message (make-message player (str "There used to be " (get (:treasure-map player) (:loc player))  " treasure at this location!")) [:treasure-map (:loc player)] (is-treasure? world-state (:loc player)))
+        (update-in world-state [:character-list :caretaker] assoc :message (make-message player (str "There used to be " (loc tm)  " treasure at this location!")) [:treasure-map loc] (is-treasure? world-state loc) :susp-count (inc (get-in world-state [:character-list :caretaker :susp-count])))
+        (update-in world-state [:character-list (:turn world-state)] assoc :message (make-message player (str "There used to be " (loc tm)  " treasure at this location!")) [:treasure-map loc] (is-treasure? world-state loc))
         )
       :else world-state 
       )
@@ -880,6 +911,10 @@
   (let [player-keyword (:turn world-state)
         player (get-player world-state)
         general-movelist " - move\n - turn\n - find phones\n"
+        treasure-movelist (if (is-treasure? world-state (:loc player))
+                            (str " - pick up treasure\n")
+                            ""
+                            )
         door-movelist (if (available-exit world-state)
                         (str " - check door\n - lock door\n" (if (= player-keyword :caretaker)
                                                                " - unlock door\n"
@@ -903,7 +938,7 @@
                        ""
                        )
         ]
-    (str general-movelist door-movelist phone-movelist subdued-list "\n")
+    (str general-movelist treasure-movelist door-movelist phone-movelist subdued-list "\n")
     )
   )
 (defn move-list-text
@@ -981,12 +1016,12 @@
 (defn unlock-exit
   [world-state exit]
   (let [unlock-state (assoc-in world-state [:exit-list (key exit) :open?] true)]
-    (assoc unlock-state :move-edges (add-edges (:move-edges unlock-state) (open-exits? (:exit-list unlock-state)))))
+    (assoc unlock-state :move-edges (add-edges (:move-edges unlock-state) (find-exits (:exit-list unlock-state) :open?))))
   )
 (defn lock-exit
   [world-state exit]
   (let [lock-state (assoc-in world-state [:exit-list (key exit) :open?] false)]
-    (assoc lock-state :move-edges (remove-exit-edges (:move-edges lock-state) (locked-exits? (:exit-list lock-state))))
+    (assoc lock-state :move-edges (remove-exit-edges (:move-edges lock-state) (find-exits (:exit-list lock-state) (complement :open?))))
       ) 
   )
 ;; TODO Have to adjust so that move edges get updated for lock and unlock
@@ -1246,52 +1281,52 @@
                                 "Caretaker"
                                 "Cat"
                                 )
-                muffle (assoc-in world-state [:character-list (other-character (:turn world-state))] :muffled? true)
-                unmuffle (assoc-in world-state [:character-list (:turn world-state)] :muffled? false)
+                muffle (assoc-in world-state [:character-list (other-character (:turn world-state)):muffled?] true)
+                unmuffle (assoc-in world-state [:character-list (:turn world-state):muffled?] false)
                 ]
             (or (= input "quit") (= input "q")) nil
-            (= input "yell") (combat (change-character (yell world-state))) 
-            (= input "charm") (combat (charm world-state))
+            (= input "yell") (change-character (yell world-state)) 
+            (= input "charm") (charm world-state)
             (= input "muffle") (cond
                                  (:muffled? opponent) (do (println "You are already doing that.")
-                                                          (combat world-state)
+                                                          world-state
                                                           )
                                  (< (:arms player) (:arms opponent)) (do (println "You cover the " opponent-name "'s mouth with your hand.")
-                                                                         (combat (change-character (muffle world-state)))
+                                                                         (change-character (muffle world-state))
                                                                          )
                                  :else (do (println "The " opponent-name " slaps your hand away.")
-                                           (combat world-state)
+                                           world-state
                                            )
                                  )
             (= input "pry") (cond
                               (not (:muffled? player)) (do (println "You are not currently muffled.")
-                                                           (combat world-state)
+                                                           world-state
                                                            )
                               (< (:arms player) (:arms opponent)) (do (println "You pry the " opponent-name "'s hand off of your mouth.")
-                                                                      (combat (change-character (unmuffle world-state)))
+                                                                      (change-character (unmuffle world-state))
                                                                       )
                               :else (do (println "The " opponent-name " laughs as you attempt to free your mouth.")
-                                        (combat world-state)
+                                        world-state
                                         )
                               )
             (= input "flee" (do (print-pr "Where would you like to move?")
                                 (flush)
-                                (combat (move world-state (:turn world-state) (keyword (read-line))))
+                                (move world-state (:turn world-state) (keyword (read-line)))
                                 ))
-            (= input "subdue" (combat (subdue world-state)))
-            (= input "resist") (combat (resist world-state))
+            (= input "subdue" (subdue world-state))
+            (= input "resist") (resist world-state)
             ))))
   )
 (defn play
   [initial-state]
-    (if (= (:loc player) (:loc opponent)) 
-      (let [initiative-state (assoc (make-caretaker-aware world-state) :turn (roll-for-initiative))
+    (if (= (get-player-loc initial-state) (get-opponent-loc initial-state)) 
+      (let [initiative-state (assoc (make-caretaker-aware initial-state) :turn (roll-for-initiative))
             ambush-state (assoc (free-action initiative-state) :turn :cat)]
       (cond 
-        (not (is-caretaker-aware? world-state)) (play (combat ambush-state))
+        (not (is-caretaker-aware? initial-state)) (play (combat ambush-state))
         (and 
           (> (+ (rand-int 6) 1) 4)
-          (not (can-see? world-state (get-active-view-edges (get-cat world-state)) (get-caretaker world-state) (get-cat world-state)))) (play (combat ambush-state))
+          (not (can-see? initial-state (get-active-view-edges (get-cat initial-state)) (get-caretaker initial-state) (get-cat initial-state)))) (play (combat ambush-state))
         :else (play (combat initiative-state))
         ))
       (let [world-state (update-and-print-message initial-state)
@@ -1369,7 +1404,15 @@
 (defn start
   []
   (let [exit-list (make-exits)
-        initial-state (Game-state. (make-phones) exit-list (make-treasure) (make-characters) (repeat 3 (make-neighbor)) (move-edges-with-exit exit-list) false :cat true)]
+        initial-state {:phone-list (make-phones)
+                       :exit-list exit-list
+                       :treasure-list (make-treasure)
+                       :character-list (make-characters)
+                       :neighbor-list (repeat 3 (make-neighbor))
+                       :move-edges (move-edges-with-exit exit-list)
+                       :combat? false
+                       :turn :cat
+                       :free-action? true}]
       (do 
         (println (get-in initial-state [:character-list (:turn initial-state) :message]))
         (play initial-state))
@@ -1378,7 +1421,15 @@
 (defn test-state
   []
   (let [exit-list (make-exits)]
-    (Game-state. (make-phones) exit-list (make-treasure) (make-characters) (repeat 3 (make-neighbor)) (move-edges-with-exit exit-list) false :cat true) 
+    {:phone-list (make-phones)
+                       :exit-list exit-list
+                       :treasure-list (make-treasure)
+                       :character-list (make-characters)
+                       :neighbor-list (repeat 3 (make-neighbor))
+                       :move-edges (move-edges-with-exit exit-list)
+                       :combat? false
+                       :turn :cat
+                       :free-action? true} 
     )
   )
 (defn -main
