@@ -484,7 +484,7 @@
   )
 (defn make-caretaker-aware
   [world-state]
-  (assoc-in world-state [:character-list :caretaker :aware] true)
+  (assoc-in world-state [:character-list :caretaker :aware?] true)
   )
 (defn is-subdued?
   [player]
@@ -541,10 +541,10 @@
         edges (alg/edges-in-path path)]
     (cond 
       (nil? path) nil
+      (= (:loc player) (:loc opponent)) nil
       (= (uber/attr see-edges (first edges) :direction) (opp-dir pdir)) nil
       (or (every? #(= (uber/attr see-edges % :direction) pdir) edges)
-          (and (< (:cost path) (max-move world-state)) (every? #(= (uber/attr see-edges % :direction) (uber/attr see-edges (first edges) :direction)) edges))) 
-      {:see-loc oloc :see-dir odir}
+          (and (< (:cost path) (max-move world-state)) (every? #(= (uber/attr see-edges % :direction) (uber/attr see-edges (first edges) :direction)) edges))) {:see-loc oloc :see-dir odir}
       :else nil
           )
     ))
@@ -579,7 +579,7 @@
        )
      )
    )
-  ([sound-edges ploc nmap]
+  ([ploc nmap]
     (if-let [h (and nmap  (last (filter (fn [[k v]] (let [p (alg/shortest-path sound-edges ploc k)] (and p (<= (:cost p) v)))) nmap)))]
       (uber/attr sound-edges (first (alg/edges-in-path (alg/shortest-path sound-edges ploc (key h)))) :direction)
       nil
@@ -612,11 +612,10 @@
   [world-state]
   (let [player (get-player world-state)
         update-for-noise (fn [n] 
-                           (change-character 
                              (assoc-player world-state :caretaker 
                                            :noise-map (edge-noise sound-edges (get-player-loc world-state) n)
                                            :add-message (str "On your last turn, you yelled for " n "noise!")  
-                                           )))
+                                           ))
         ]
   (cond 
     (= (:turn world-state) :cat) (do (println "What part of 'cat burglar' don't you understand?")
@@ -840,7 +839,7 @@
   [world-state]
   (let [player (get-player world-state)
         opponent (get-opponent world-state)]
-    (if-let [hear-dir (can-hear? sound-edges (:loc player) (:noise-map opponent))] 
+    (if-let [hear-dir (can-hear? (:loc player) (:noise-map opponent))] 
           (if (= (:turn world-state) :caretaker) 
             (make-caretaker-suspicious (update-message world-state (str "You hear something from " (name hear-dir) ".")))
             (update-message world-state (str "You hear the Caretaker from " (name hear-dir) "."))
@@ -960,9 +959,44 @@
     (str general-movelist treasure-movelist door-movelist phone-movelist subdued-list "\n")
     )
   )
-(defn move-list-text
+(defn build-combat-move-list
   [world-state]
-  (update-message world-state (build-move-list world-state))
+  (let [player-keyword (:turn world-state)
+        player (get-player world-state)
+        general-movelist " - move\n - turn\n - find phones\n"
+        treasure-movelist (if (is-treasure? world-state (:loc player))
+                            (str " - pick up treasure\n")
+                            ""
+                            )
+        door-movelist (if (available-exit world-state)
+                        (str " - check door\n - lock door\n" (if (= player-keyword :caretaker)
+                                                               " - unlock door\n"
+                                                               " - pick lock\n"
+                                                               ))
+                        ""
+                        )
+        phone-movelist (if (available-phone world-state)
+                         (str " - check phone\n"
+                              (if (= player-keyword :cat)
+                                " - sabotage\n"
+                                (if (:aware player)
+                                  " - dial 911\n"
+                                  " - fix\n"
+                                  )
+                                )
+                              )
+                         )
+        subdued-list (if (is-subdued? player)
+                       " - resist\n"
+                       ""
+                       )
+        ]
+    (str general-movelist treasure-movelist door-movelist phone-movelist subdued-list "\n")
+    )
+  )
+(defn move-list-text
+  [world-state f]
+  (update-message world-state (f world-state))
   )
 (defn move-prompt-text
   [world-state]
@@ -979,59 +1013,22 @@
       (hear-text)
       (susp-aware-text)
       (capability-text)
-      (move-list-text)
+      (move-list-text build-move-list)
       (move-prompt-text)
       )
   )
-
-;(defn sabotage
-;  [world-state]
-;  (let [available-phone (available-phone world-state)]
-;    (if (nil? available-phone)
-;      (do (println "There are no phones near you.")
-;          world-state
-;          )
-;      (if (:able? (val available-phone))
-;        (change-character (update-add-message  (assoc-in world-state [:phone-list (key phone) :able?] false) "This phone is now broken."))
-;        (do (println "You've already sabotaged this phone!")
-;            world-state
-;            )
-;        )
-;      )
-;    )
-;  )
-;(defn unlock-door
-;  [world-state]
-;  (let [available-exit (available-exit world-state)]
-;    (if (nil? available-exit)
-;      (do (println "There are no doors near you.")
-;          world-state
-;          )
-;        (if (:open? (val available-exit))
-;          (do (println "The door in front of you is already unlocked!")
-;              world-state
-;              )
-;          (change-character (unlock-exit world-state available-exit))
-;          )
-;      )
-;    )
-;  )
-;(defn lock-door
-;  [world-state]
-;  (let [available-exit (available-exit world-state)]
-;    (if (nil? available-exit)
-;      (do (println "There are no doors near you.")
-;          world-state
-;          )
-;      (if (:open? (val available-exit))
-;        (change-character (lock-exit world-state available-exit))
-;        (do (println "The door in front of you is already locked!")
-;            world-state
-;            )
-;        )
-;      )
-;    )
-;  )
+(defn update-and-print-combat-message
+  [world-state]
+  (-> world-state
+      (init-message)
+      (loc-text)
+      (your-treasure-text)
+      (treasure-here-text)
+      (capability-text)
+      (move-list-text build-combat-move-list)
+      (move-prompt-text)
+      )
+  )
 (defn unlock-exit
   [world-state exit]
   (let [unlock-state (assoc-in world-state [:exit-list (key exit) :open?] true)]
@@ -1043,7 +1040,6 @@
     (assoc lock-state :move-edges (remove-exit-edges (:move-edges lock-state) (find-exits (:exit-list lock-state) (complement :open?))))
       ) 
   )
-;; TODO Have to adjust so that move edges get updated for lock and unlock
 (defn act
   [world-state action-keyword]
   (let [sm (action-keyword  
@@ -1183,16 +1179,17 @@
                   (flush)
                   (keyword (read-line))
                   )
-        roll (fn [c] (if (> (:arms c) 0)
-                       (+ (rand-int 6) 1)
+        roll (fn [c] (if (= (:arms c) 0)
                        (+ (rand-int 12) 1)
+                       (+ (rand-int 6) 1)
                        ))
-        roll-diff (- (roll (get-player world-state)) (roll (get-opponent world-state)))
-        old-subdue (input (get-opponent world-state))
+        roll-diff (- (roll player) (roll opponent))
+        old-subdue (input opponent)
         new-subdue (+ old-subdue roll-diff)
         bind-mat (rand-nth bind-mats)
-        add-subdue (change-character (assoc-in world-state [:character-list (other-character (:turn world-state)) input] new-subdue))
-        new-bind (change-character (update-in world-state [:character-list (other-character (:turn world-state))] assoc input new-subdue (get-sub-mat input) bind-mat))
+        oc (other-character (:turn world-state))
+        add-subdue (change-character (assoc-player world-state oc input new-subdue) )
+        new-bind (change-character (assoc-player world-state oc input new-subdue (get-sub-mat input) bind-mat))
         ] 
     (if (> roll-diff 0)
       (cond 
@@ -1207,7 +1204,8 @@
                                                                     add-subdue
                                                                     )
                                                :else (do (println "You grab some " bind-mat " and bind the " opponent-name "'s " (name input) " by " roll-diff ".")
-                                                         new-bind      
+                                                         (do (clojure.pprint/pprint (get-player new-bind)) 
+                                                             new-bind)      
                                                          )
                                                )
 
@@ -1216,7 +1214,7 @@
                            (> old-subdue 11) (do (println "The " opponent-name " is already fully gagged.")
                                                  world-state
                                                  )
-                           (> old-subdue 6) (do (println "You grab some more " (:over-mouth-mat opponent)" and reinforce the " opponent-name "'s gag by " roll-diff ".")
+                           (> old-subdue 6) (do (println "You grab some more " (:over-mouth-mat opponent)" and add it to the " opponent-name "'s gag by " roll-diff ".")
                                                 add-subdue 
                                                 )
                            (and (> old-subdue 0) (> new-subdue 6)) (let [om-mat (rand-nth over-mouth-mats)] 
@@ -1227,7 +1225,9 @@
                                                 add-subdue
                                                 )
                            :else (let [im-mat (rand-nth in-mouth-mats)] 
-                                   (do (println "You grab " im-mat " and shove it in the " opponent-name "'s mouth, gagging them for " roll-diff ".")))
+                                   (do (println "You grab " im-mat " and shove it in the " opponent-name "'s mouth, gagging them for " roll-diff ".")
+                                       (change-character (assoc-player world-state oc input new-subdue :in-mouth-mat im-mat))
+                                       ))
                            )
         :else (do (println "You can't target that.")
                   world-state
@@ -1243,18 +1243,26 @@
                   (flush)
                   (keyword (read-line))
                   )
-        roll (fn [c] (cond 
-                       (> (:arms c) 6) (int (Math/floor (/  (+ (rand-int 6) 1) 4)))
-                       (> (:arms c) 0) (int (Math/floor (/  (+ (rand-int 6) 1) 2)))
-                       :else (+ (rand-int 6) 1)
-                       ))
         player (get-player world-state)
+        roll (cond 
+               (> (:arms player) 6) (int (Math/floor (/  (+ (rand-int 6) 1) 4)))
+               (> (:arms player) 0) (int (Math/floor (/  (+ (rand-int 6) 1) 2)))
+               :else (+ (rand-int 6) 1)
+               )
         old-subdue (input player)
-        new-subdue (- old-subdue (roll player))
+        new-subdue (let [n (- old-subdue roll)] 
+                     (if (> n 0)
+                       n
+                       0
+                       )
+                     ) 
         reduce-subdue (change-character (assoc-in world-state [:character-list (:turn world-state) input] new-subdue))
         ]
-    (cond
+    (do (println player) (cond
       (= input :mouth) (cond
+                         (= old-subdue 0) (do (println "Your mouth is not subdued.")
+                                              world-state
+                                              )
                          (> new-subdue 6) (do (println "You loosen the " (:over-mouth-mat player) " over your mouth.")
                                               reduce-subdue
                                               )
@@ -1272,12 +1280,13 @@
                                              (= new-subdue 0) (do (println "You wriggle free of the " ((get-sub-mat input) player) "!")
                                                                   (change-character (update-in world-state [:character-list (:turn world-state)] assoc input new-subdue (get-sub-mat input) nil))
                                                                   )
-                                             :else reduce-subdue
+                                             :else (do (println "You loosen the " ((get-sub-mat input) player) "!") 
+                                                       reduce-subdue)
                                              )
       :else (do (println "You can't resist that.")
                 world-state
                 )
-      )
+      ))
     )
   )
 (defn roll-for-initiative
@@ -1289,8 +1298,9 @@
   )
 ;; TODO Hot coffee option
 (defn combat
-  [world-state]
-  (let [current-player-name (:turn world-state)
+  [initial-state]
+  (let [world-state (update-and-print-combat-message initial-state)
+        current-player-name (:turn world-state)
         player (get-player world-state)
         opponent (get-opponent world-state)]
     (do (println (str (:message player) "\n\nYou are in combat!"))
